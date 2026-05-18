@@ -81,6 +81,18 @@ module Bot
             end
 
             @state.save
+
+            # Automatic backup (non-fatal)
+            if ENV["GITHUB_TOKEN"] && (ENV["SENTINEL_BACKUP_GIST_ID"] || ENV["SENTINEL_BACKUP_AUTO"])
+                begin
+                    require_relative "backup"
+                    backup = Backup.new(token: ENV["GITHUB_TOKEN"], state_path: @state.instance_variable_get(:@path))
+                    backup.save
+                rescue => e
+                    $stderr.puts "Backup failed (non-fatal): #{e.message}"
+                end
+            end
+
             @audit.run_end(@summary)
             print_summary
         end
@@ -529,6 +541,14 @@ if __FILE__ == $0
             options[:bootstrap] = true
         end
 
+        opts.on("--backup", "Manually trigger a state backup to GitHub Gist") do
+            options[:backup] = true
+        end
+
+        opts.on("--restore", "Restore state from backup gist") do
+            options[:restore] = true
+        end
+
         opts.on("--limit N", Integer, "Max repos to scan (default: unlimited)") do |n|
             options[:limit] = n
         end
@@ -655,6 +675,24 @@ if __FILE__ == $0
         state.save
         print_dashboard(state)
         exit 0
+    end
+
+    if options[:backup]
+        token = ENV["GITHUB_TOKEN"]
+        abort("GITHUB_TOKEN required for backup") unless token
+        require_relative "backup"
+        backup = Bot::Backup.new(token: token)
+        success = backup.save
+        exit(success ? 0 : 1)
+    end
+
+    if options[:restore]
+        token = ENV["GITHUB_TOKEN"]
+        abort("GITHUB_TOKEN required for restore") unless token
+        require_relative "backup"
+        backup = Bot::Backup.new(token: token)
+        success = backup.restore
+        exit(success ? 0 : 1)
     end
 
     token = ENV["GITHUB_TOKEN"]
