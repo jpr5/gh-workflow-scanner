@@ -819,4 +819,67 @@ class TestScannerBotIntegration < Minitest::Test
         assert_equal 1, summary[:scanned], "Should scan only the clean repo"
         assert_equal 0, summary[:findings], "Clean repo should have no findings"
     end
+
+    # ========================================================================
+    # Test: Critical-severity rules flow through without an allowlist
+    #
+    # Regression test for the CRITICAL_RULES allowlist bug: a rule that
+    # returns :critical severity must flow through scan_and_fix into the
+    # queue without needing to be added to any hardcoded allowlist. This
+    # test uses "ai-config-injection" (a real rule added in PR #31) which
+    # was silently dropped in production because it was not in CRITICAL_RULES.
+    # ========================================================================
+
+    def test_critical_severity_rule_flows_through_without_allowlist
+        bot = build_bot(pattern: "shell-injection", queue_mode: true)
+
+        # Create a finding from a rule NOT in the old CRITICAL_RULES allowlist
+        novel_finding = Finding.new(
+            rule: "ai-config-injection",
+            severity: :critical,
+            file: "ci.yml",
+            line: 8,
+            code: 'uses: actions/checkout@v4',
+            message: "AI tool configuration may be injected via PR",
+            fix: "Review manually"
+        )
+
+        @stub_search.candidates = [{ full_name: "owner/ai-vuln-repo", stars: 1000 }]
+        @stub_scanner.scan_results["owner/ai-vuln-repo"] = {
+            findings: [novel_finding],
+            output: "",
+            workflow_count: 1,
+        }
+
+        @stub_gh_client.file_exists_map[["owner/ai-vuln-repo", ".github/.sentinel-ci.yml"]] = false
+        @stub_gh_client.workflows = []
+        @stub_gh_client.file_content_map[["owner/ai-vuln-repo", ".github/workflows/ci.yml"]] = vulnerable_workflow_yaml
+
+        _output = capture_io { bot.run }
+
+        summary = bot.instance_variable_get(:@summary)
+
+        # The finding is :critical severity and the scanner was built with
+        # min_severity: :critical, so it MUST count as a finding and reach
+        # the queue. If a hardcoded allowlist silently drops it, this fails.
+        assert summary[:findings] > 0,
+            "Critical-severity findings must not be silently dropped by a hardcoded allowlist. " \
+            "Got findings=#{summary[:findings]} (expected > 0)"
+
+        queue = bot.instance_variable_get(:@queue)
+        pending = queue.pending
+
+        # The finding is advisory-only (not auto-fixable), so it should be
+        # queued as an issue.
+        assert pending.length > 0,
+            "Critical-severity advisory findings must reach the queue. " \
+            "Got #{pending.length} pending entries (expected > 0)"
+
+        entry = pending.first
+        assert_equal "owner/ai-vuln-repo", entry["repo"]
+        assert_equal "issue", entry["type"],
+            "Advisory-only critical findings should queue as issues"
+        assert entry["findings"].any? { |f| f["rule"] == "ai-config-injection" },
+            "The ai-config-injection finding must appear in the queued entry"
+    end
 end
