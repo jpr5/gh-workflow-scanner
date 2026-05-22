@@ -177,10 +177,9 @@ module Bot
                 return
             end
 
-            # Filter to critical/high findings matching fixable rules
-            critical_findings = findings.select { |f|
-                Config::CRITICAL_RULES.include?(f.rule) && (f.critical? || f.high?)
-            }
+            # Filter to critical/high findings by severity (the Scanner's min_severity
+            # already gates, but re-check here for defense-in-depth)
+            critical_findings = findings.select { |f| f.critical? || f.high? }
 
             @state.record_scan(repo[:full_name], critical_findings)
 

@@ -355,7 +355,7 @@ class TestQueueBackupEdgeCases < Minitest::Test
 
         bot = build_bot(pattern: "shell-injection", queue_mode: true)
 
-        # Only low and medium findings — these are NOT in CRITICAL_RULES
+        # Only low and medium findings — below the critical/high severity gate
         low_finding = make_low_severity_finding
         medium_finding = make_medium_severity_finding
 
